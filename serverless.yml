@@ -1,0 +1,143 @@
+custom:
+  functionsBasePath: src/handlers
+  bucketName: search-cv-upload
+  tableName: 'talents-table-${sls:stage}'
+  openIaKey: '<OPENIA_KEY>'
+  emailAddressTo: '<emailTo>'
+  emailAddressFrom: '<emailFrom>'
+
+service: inhire-search-svc
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:BatchWrite
+            - dynamodb:BatchWriteItem
+            - dynamodb:ListStreams
+            - dynamodb:DescribeTable
+          Resource:
+            - Fn::GetAtt: [ TalentsTable, Arn ]
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+          Resource: "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.tableName}/index/*"
+        - Effect: Allow
+          Action: 
+            - s3:GetObject
+            - s3:PutObject
+          Resource: "arn:aws:s3:::${self:custom.bucketName}/*"
+        - Effect: Allow
+          Action: 
+            - ses:SendEmail
+            - ses:SendRawEmail
+          Resource: "*"
+  environment:
+    TALENTS_TABLE: ${self:custom.tableName}
+    BUCKET_NAME: ${self:custom.bucketName}
+    REGION: ${self:provider.region}
+    OPENAI_API_KEY: ${self:custom.openIaKey}
+    EMAIL_ADDRESS_TO: ${self:custom.emailAddressTo}
+    EMAIL_ADDRESS_FROM: ${self:custom.emailAddressFrom}
+
+functions:
+  generateUrlToUploadResume:
+    handler: generateUrlToUploadResume.handler
+    events:
+      - httpApi:
+          path: /generate-url-upload-resume
+          method: post
+  registerTalent:
+    handler: registerTalent.handler    
+    events:
+      - httpApi:
+          path: /register-talent
+          method: post
+  searchTalent:
+    handler: searchTalent.handler    
+    events:
+      - httpApi:
+          path: /search-talent
+          method: get
+  receiveResume:
+    handler: receiveResume.handler
+    timeout: 25
+    memorySize: 2048
+    events:
+      - s3:
+          bucket: ${self:custom.bucketName}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: uploads/
+            - suffix: .pdf
+          existing: true
+          forceDeploy: true 
+  sendEmailToRecruitersNewTalent:
+    handler: sendEmailToRecruitersNewTalent.handler
+    events:
+      - stream:
+          type: dynamodb
+          batchSize: 5
+          startingPosition: LATEST
+          arn:
+            Fn::GetAtt:
+              - TalentsTable
+              - StreamArn
+          filterPatterns:
+            - eventName: [INSERT]
+
+resources:
+  Resources:
+    TalentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: talentId
+            AttributeType: S
+          - AttributeName: techId
+            AttributeType: S
+          - AttributeName: tech
+            AttributeType: S
+        KeySchema:
+          - AttributeName: talentId
+            KeyType: HASH
+          - AttributeName: techId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: techIdIndex
+            KeySchema:
+              - AttributeName: techId
+                KeyType: HASH
+              - AttributeName: talentId
+                KeyType: RANGE  
+            Projection:
+              ProjectionType: 'ALL'
+          - IndexName: techIndex
+            KeySchema:
+              - AttributeName: tech
+                KeyType: HASH
+              - AttributeName: techId
+                KeyType: RANGE
+            Projection:
+              ProjectionType: 'ALL'   
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.tableName}
+        StreamSpecification:
+            StreamViewType: NEW_IMAGE
+
+plugins:
+  - serverless-functions-base-path
+  - serverless-plugin-typescript
