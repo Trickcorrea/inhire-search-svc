@@ -97,7 +97,7 @@ export class ReceiveResumeService {
     }
     private getOpenIaClient(){
         const configuration = new Configuration({
-            apiKey: process.env.OPENAI_API_KEY || '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',
+            apiKey: process.env.OPENAI_API_KEY,
         });
 
         return new OpenAIApi(configuration);
